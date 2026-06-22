@@ -1,50 +1,161 @@
-import { http } from '@kit.NetworkKit';
+import { webSocket } from '@kit.NetworkKit';
 import { BusinessError } from '@kit.BasicServicesKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
+import { util } from '@kit.ArkTS';
 
 const DOMAIN = 0x0001;
-// ⚠️ 这里必须改为你的PC局域网IP+端口
-const SERVER_URL = 'http://192.168.0.14:3000';
+// ⚠️ 协议改为 ws://，IP替换为你的PC局域网IP
+const SERVER_URL = 'ws://192.168.0.14:3000';
 
-// 1. 显式定义正式消息数据接口
+// 正式消息数据接口
 interface Message {
   id: number;
   content: string;
   time: string;
 }
 
-// 2. 显式定义临时宽松接口（仅用于承接JSON.parse结果，后续会严格过滤）
+// 临时宽松接口，用于类型安全校验
 interface RawMessage {
   id?: number | string;
   content?: number | string;
   time?: number | string;
 }
 
-// 3. 显式定义临时宽松数组接口
 type RawMessageArray = RawMessage[];
+
+// WebSocket服务端推送消息结构
+interface WsHistoryMsg {
+  type: 'history';
+  data: RawMessageArray;
+}
+
+interface WsNewMsg {
+  type: 'newMessage';
+  data: RawMessage;
+}
+
+type WsReceivedMsg = WsHistoryMsg | WsNewMsg;
 
 @Entry
 @Component
 struct Index {
   @State messageList: Array<Message> = [];
   @State inputText: string = '';
-  private pollTimer: number | null = null;
+  private ws: webSocket.WebSocket | null = null;
+  // 手动维护连接状态，替代浏览器端readyState
+  private isConnected: boolean = false;
 
-  // 页面显示时启动消息轮询
+  // 页面显示时建立WebSocket连接
   onPageShow(): void {
-    this.fetchMessages();
-    this.pollTimer = setInterval(() => this.fetchMessages(), 1000);
+    this.initWebSocket();
   }
 
-  // 页面隐藏时停止轮询
+  // 页面隐藏时关闭连接，释放资源
   onPageHide(): void {
-    if (this.pollTimer !== null) {
-      clearInterval(this.pollTimer);
-      this.pollTimer = null;
+    this.closeWebSocket();
+  }
+
+  /**
+   * 初始化WebSocket连接
+   */
+  private initWebSocket(): void {
+    // 先关闭已有连接，避免重复连接
+    this.closeWebSocket();
+
+    try {
+      this.ws = webSocket.createWebSocket();
+
+      // 连接成功回调
+      this.ws.on('open', (err: BusinessError) => {
+        if (err) {
+          hilog.error(DOMAIN, 'Chat', '连接失败: %{public}s', JSON.stringify(err));
+          this.isConnected = false;
+          return;
+        }
+        hilog.info(DOMAIN, 'Chat', 'WebSocket连接成功');
+        this.isConnected = true;
+      });
+
+      // 接收服务端消息：标准双参数回调（错误对象 + 消息数据）
+      this.ws.on('message', (err: BusinessError, data: string | ArrayBuffer) => {
+        if (err) {
+          hilog.error(DOMAIN, 'Chat', '接收消息错误: %{public}s', JSON.stringify(err));
+          return;
+        }
+
+        // 统一转成字符串
+        let rawString: string = '';
+        if (typeof data === 'string') {
+          rawString = data;
+        } else {
+          const decoder: util.TextDecoder = util.TextDecoder.create('utf-8');
+          rawString = decoder.decodeToString(new Uint8Array(data));
+        }
+        this.handleWebSocketMessage(rawString);
+      });
+
+      // 连接错误回调
+      this.ws.on('error', (err: BusinessError) => {
+        hilog.error(DOMAIN, 'Chat', '连接异常: %{public}s', JSON.stringify(err));
+        this.isConnected = false;
+      });
+
+      // 连接关闭回调
+      this.ws.on('close', (err: BusinessError) => {
+        hilog.info(DOMAIN, 'Chat', 'WebSocket连接已关闭');
+        this.isConnected = false;
+      });
+
+      // 发起连接
+      this.ws.connect(SERVER_URL);
+    } catch (e) {
+      hilog.error(DOMAIN, 'Chat', '创建WebSocket失败: %{public}s', JSON.stringify(e));
     }
   }
 
-  // 安全的类型检查：验证正式Message结构
+  /**
+   * 关闭WebSocket连接
+   */
+  private closeWebSocket(): void {
+    if (this.ws) {
+      try {
+        this.ws.close();
+      } catch (e) {
+        hilog.error(DOMAIN, 'Chat', '关闭连接异常: %{public}s', JSON.stringify(e));
+      }
+      this.ws = null;
+      this.isConnected = false;
+    }
+  }
+
+  /**
+   * 处理WebSocket收到的消息
+   */
+  private handleWebSocketMessage(rawString: string): void {
+    try {
+      // 显式类型断言，消除隐式any
+      const msg: WsReceivedMsg = JSON.parse(rawString) as WsReceivedMsg;
+      if (msg.type === 'history') {
+        // 全量历史消息，替换列表
+        this.messageList = this.parseMessageArray(JSON.stringify(msg.data));
+      } else if (msg.type === 'newMessage') {
+        // 单条新消息，追加到列表
+        const rawItem: RawMessage = msg.data;
+        const candidate: Message = {
+          id: typeof rawItem.id === 'number' ? rawItem.id : 0,
+          content: typeof rawItem.content === 'string' ? rawItem.content : '',
+          time: typeof rawItem.time === 'string' ? rawItem.time : ''
+        };
+        if (this.checkMessage(candidate)) {
+          this.messageList.push(candidate);
+        }
+      }
+    } catch (e) {
+      hilog.error(DOMAIN, 'Chat', '消息解析异常');
+    }
+  }
+
+  // 类型校验：验证Message结构合法性
   private checkMessage(msg: Message): boolean {
     const hasValidId: boolean = typeof msg.id === 'number';
     const hasValidContent: boolean = typeof msg.content === 'string';
@@ -52,20 +163,14 @@ struct Index {
     return hasValidId && hasValidContent && hasValidTime;
   }
 
-  // 安全的消息数组解析：全程使用显式类型
+  // 安全解析消息数组
   private parseMessageArray(rawString: string): Array<Message> {
     let resultArray: Array<Message> = [];
-
     try {
-      // 4. 关键修复：JSON.parse后立即转成显式的RawMessageArray
       const parsed: RawMessageArray = JSON.parse(rawString) as RawMessageArray;
-
-      // 检查是否为数组（虽然RawMessageArray本身是数组，但JSON.parse可能返回非数组）
       if (Array.isArray(parsed)) {
-        // 遍历并验证每一项
         for (let i = 0; i < parsed.length; i++) {
           const rawItem: RawMessage = parsed[i];
-          // 先转成Message再检查（因为我们只关心这三个字段）
           const candidate: Message = {
             id: typeof rawItem.id === 'number' ? rawItem.id : 0,
             content: typeof rawItem.content === 'string' ? rawItem.content : '',
@@ -79,47 +184,29 @@ struct Index {
     } catch (e) {
       hilog.error(DOMAIN, 'Chat', '数据解析异常');
     }
-
     return resultArray;
   }
 
-  // 拉取最新消息
-  private fetchMessages(): void {
-    const httpRequest = http.createHttp();
-    httpRequest.request(`${SERVER_URL}/messages`, {
-      method: http.RequestMethod.GET,
-      expectDataType: http.HttpDataType.STRING // 始终以字符串形式获取
-    }, (err: BusinessError, data: http.HttpResponse) => {
-      if (!err && data.responseCode === 200) {
-        const rawData: string = data.result as string;
-        this.messageList = this.parseMessageArray(rawData);
-      } else {
-        hilog.error(DOMAIN, 'Chat', '拉取消息失败: %{public}s', JSON.stringify(err));
-      }
-      httpRequest.destroy();
-    });
-  }
-
-  // 发送消息
+  /**
+   * 发送消息（WebSocket通道）
+   */
   private sendMessage(): void {
-    if (this.inputText.trim().length === 0) {
+    if (!this.inputText.trim()) return;
+    if (!this.ws || !this.isConnected) {
+      hilog.error(DOMAIN, 'Chat', 'WebSocket未连接，发送失败');
       return;
     }
 
-    const httpRequest = http.createHttp();
-    httpRequest.request(`${SERVER_URL}/send`, {
-      method: http.RequestMethod.POST,
-      header: { 'Content-Type': 'application/json' },
-      extraData: JSON.stringify({ content: this.inputText }),
-      expectDataType: http.HttpDataType.STRING
-    }, (err: BusinessError, data: http.HttpResponse) => {
-      if (!err && data.responseCode === 200) {
-        this.inputText = '';
-      } else {
-        hilog.error(DOMAIN, 'Chat', '发送消息失败: %{public}s', JSON.stringify(err));
-      }
-      httpRequest.destroy();
-    });
+    try {
+      const sendData: string = JSON.stringify({
+        type: 'send',
+        content: this.inputText.trim()
+      });
+      this.ws.send(sendData);
+      this.inputText = '';
+    } catch (e) {
+      hilog.error(DOMAIN, 'Chat', '发送消息失败: %{public}s', JSON.stringify(e));
+    }
   }
 
   build() {
@@ -159,7 +246,6 @@ struct Index {
           .onSubmit(() => {
             this.sendMessage();
           })
-
         Button('发送')
           .height(48)
           .onClick(() => {
