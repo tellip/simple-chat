@@ -1,0 +1,19 @@
+flowchart TD
+    classDef default white-space:nowrap
+
+    A(onPageShow)
+    --> B("setInterval() 启动1s轮询<br/>存入 pollTimer")
+    --> |"周期触发"| C(fetchMessages)
+    --> D("http.createHttp().request<br/>GET /messages")
+    --> E("parseMessageArray 解析数据1234<br/>更新 @State messageList")
+    --> F["List + ForEach 自动重渲染"]
+
+    G["TextInput 输入组件<br />双向绑定 inputText"]
+    --> H["sendMessage 自定义发送函数<br />onClick / onSubmit 触发"]
+    --> I["http.createHttp().request<br />POST /send 接口"]
+    --> J["请求成功 → 清空 inputText"]
+
+    K["onPageHide"]
+    --> L["clearInterval 清除轮询<br />释放 pollTimer"]
+
+    
