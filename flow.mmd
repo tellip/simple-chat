@@ -1,0 +1,19 @@
+flowchart TD
+    classDef default white-space:nowrap;
+
+    A1(onPageShow) --> A2("initWebSocket 初始化连接")
+    A2 --> A3("webSocket.createWebSocket() 创建实例")
+    A3 --> A4("connect(SERVER_URL) 发起连接")
+    A4 --> A5("onopen 回调：连接建立成功")
+
+    F("onmessage 回调：收到服务端数据") --> G("handleWebSocketMessage 消息分发")
+    G --> |type: history| H("parseMessageArray 解析<br/>全量更新 @State messageList")
+    G --> |type: newMessage| I("单条消息追加<br/>更新 @State messageList")
+    H --> J["List + ForEach 自动重渲染"]
+    I --> J
+
+    K["TextInput 输入组件<br/>双向绑定 inputText"] --> L("sendMessage 发送函数<br/>onClick / onSubmit 触发")
+    L --> M("ws.send() 发送消息")
+    M --> N["发送完成 → 清空 inputText"]
+
+    O(onPageHide) --> P("closeWebSocket 关闭连接<br/>释放 ws 实例")
