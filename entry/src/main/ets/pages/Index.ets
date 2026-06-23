@@ -5,7 +5,7 @@ import { util } from '@kit.ArkTS';
 
 const DOMAIN = 0x0001;
 // ⚠️ 协议改为 ws://，IP替换为你的PC局域网IP
-const SERVER_URL = 'ws://192.168.0.14:3000';
+const SERVER_URL = 'ws://10.253.0.157:3000';
 
 // 正式消息数据接口
 interface Message {
