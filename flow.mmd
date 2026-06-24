@@ -1,19 +1,23 @@
-flowchart TD
+graph TD
     classDef default white-space:nowrap;
 
-    A1(onPageShow) --> A2("initWebSocket 初始化连接")
-    A2 --> A3("webSocket.createWebSocket() 创建实例")
-    A3 --> A4("connect(SERVER_URL) 发起连接")
-    A4 --> A5("onopen 回调：连接建立成功")
+    A0("onPageShow")
+    --> A1("initWebSocket")
+    A1 --> A2("on('open')")
+    A1 --> A3("on('message')")
+    A1 --> A4("on('error')")
+    A1 --> A5("on('close')")
 
-    F("onmessage 回调：收到服务端数据") --> G("handleWebSocketMessage 消息分发")
-    G --> |type: history| H("parseMessageArray 解析<br/>全量更新 @State messageList")
-    G --> |type: newMessage| I("单条消息追加<br/>更新 @State messageList")
-    H --> J["List + ForEach 自动重渲染"]
-    I --> J
+    D1("on('message')") --> D2("handleWebSocketMessage")
+    D2("handleWebSocketMessage") --> D3{"判断msg.type"}
+    D3 --"如果=== 'history'"--> D4("parseMessageArray")
+    D3 --"如果=== 'newMessage'"--> D5("更新messageList状态")
+    D4 --> D5
+    D5 --> D6("刷新页面")
 
-    K["TextInput 输入组件<br/>双向绑定 inputText"] --> L("sendMessage 发送函数<br/>onClick / onSubmit 触发")
-    L --> M("ws.send() 发送消息")
-    M --> N["发送完成 → 清空 inputText"]
+    C0("onSubmit发送新消息") --> C2("sendMessage")
+    C1("onClick发送新消息") --> C2("sendMessage")
+    C2 --> C3("webSocket.WebSocket实例.send")
+    C3 --> C4("向服务端发送消息")
 
-    O(onPageHide) --> P("closeWebSocket 关闭连接<br/>释放 ws 实例")
+    B0("onPageHide") --> B1("closeWebSocket")
